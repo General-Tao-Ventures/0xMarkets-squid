@@ -44,7 +44,7 @@ export const processor = new EvmBatchProcessor()
   .setGateway(chain.gateway)
   .setRpcEndpoint({
     url: process.env.RPC_URL || chain.defaultRpc,
-    rateLimit: 10
+    rateLimit: parseInt(process.env.RPC_RATE_LIMIT || '50', 10),
   })
   .setFinalityConfirmation(10)
   .setBlockRange({
