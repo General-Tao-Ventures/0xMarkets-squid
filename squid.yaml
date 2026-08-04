@@ -1,7 +1,7 @@
 manifest_version: subsquid.io/v0.1
-name: 0xmarkets-base-sepolia
+name: 0xmarkets-base-mainnet
 version: 1
-description: 0xMarkets indexer for Base Sepolia testnet
+description: 0xMarkets indexer for Base mainnet (self-hosted; CHAIN_ID=84532 for Sepolia)
 
 build:
 
@@ -10,6 +10,8 @@ deploy:
     postgres:
   processor:
     cmd: ["node", "lib/main.js"]
+    env:
+      CHAIN_ID: "8453"
   api:
     cmd: ["npx", "squid-graphql-server"]
 

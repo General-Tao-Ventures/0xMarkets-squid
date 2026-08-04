@@ -1,4 +1,4 @@
-version: "3"
+version: "3.8"
 
 services:
   db:
@@ -11,6 +11,52 @@ services:
       - "5432:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U squid -d squid"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Optional full stack for self-host (GCP / local). Local-only: `sqd up` starts just db.
+  processor:
+    profiles: ["stack"]
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: squid
+      DB_USER: squid
+      DB_PASS: squid
+    restart: unless-stopped
+    command: >
+      sh -c "npx squid-typeorm-migration apply && node lib/main.js"
+
+  api:
+    profiles: ["stack"]
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      processor:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: squid
+      DB_USER: squid
+      DB_PASS: squid
+      GQL_PORT: "4350"
+    ports:
+      - "4350:4350"
+    restart: unless-stopped
+    command: ["npx", "squid-graphql-server"]
 
 volumes:
   db-data:
