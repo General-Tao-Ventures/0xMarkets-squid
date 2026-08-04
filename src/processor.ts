@@ -40,8 +40,25 @@ export const EVENT_LOG1_TOPIC = '0x137a44067c8961cd7e1d876f4754a5a3a75989b4552f1
 // EventLog2(address,string,string,string,tuple)
 export const EVENT_LOG2_TOPIC = '0x468a25a7ba624ceea6e540ad6f49171b52495b648417ae91bca21676d8a24dc5'
 
-export const processor = new EvmBatchProcessor()
-  .setGateway(chain.gateway)
+// Self-hosted v2 gateways require an API key since 2026-05-19.
+// Create one at https://portal.sqd.dev/app — without it we skip the gateway
+// and ingest via RPC only (slower, but works).
+const sqdApiKey = process.env.SQD_API_KEY?.trim()
+
+const processorBuilder = new EvmBatchProcessor()
+if (sqdApiKey) {
+  processorBuilder.setGateway({
+    url: chain.gateway,
+    apiKey: sqdApiKey,
+  })
+} else {
+  console.warn(
+    '[processor] SQD_API_KEY unset — skipping v2 archive gateway; ingesting via RPC only. ' +
+      'Get a key at https://portal.sqd.dev/app for faster sync.',
+  )
+}
+
+export const processor = processorBuilder
   .setRpcEndpoint({
     url: process.env.RPC_URL || chain.defaultRpc,
     rateLimit: parseInt(process.env.RPC_RATE_LIMIT || '50', 10),

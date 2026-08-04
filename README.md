@@ -7,6 +7,8 @@ Subsquid indexer for the 0xMarkets protocol.
 
 Self-hosted on GCP (SQD Cloud is not required). GraphQL listens on port **4350**.
 
+Self-hosted access to the legacy v2 archive gateway requires an `SQD_API_KEY` from [portal.sqd.dev/app](https://portal.sqd.dev/app). Without it the processor skips the gateway and ingests via RPC only.
+
 ## Quick Start
 
 ### Prerequisites
