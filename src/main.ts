@@ -5,9 +5,9 @@ import { decodeEventLog, DecodedEventData } from './decoding/eventDecoder'
 import { handleOrderEvent, handlePositionEvent, handlePositionFeesEvent, PositionFeeData, EventContext } from './handlers/orders'
 import { handlePositionAndAccountStats, handleDepositAccountStats, COMPETITION_PERIODS } from './handlers/accountStats'
 import * as eventKeys from './decoding/eventKeys'
-import { handlePriceFromPositionEvent, handlePlatformStatFromDeposit } from './handlers/analytics'
+import { handlePriceFromPositionEvent, handlePriceFromOracleEvent, handlePlatformStatFromDeposit } from './handlers/analytics'
 import { handleDistributionEvent } from './handlers/distributions'
-import { handleMarketEvent, handleConfigEvent } from './handlers/markets'
+import { handleMarketEvent, handleMarketCreated, handleConfigEvent } from './handlers/markets'
 import { handleVolumeFromPositionEvent, handleFeesFromPositionFeesEvent, handleAprSnapshotFromFees, finalizeAprSnapshots } from './handlers/aggregates'
 import { TradeAction, Transaction, Price, PlatformStat, Distribution, MarketInfo, Position, AccountStat, PeriodAccountStat, VolumeInfo, FeesInfo, AprSnapshot } from './model'
 import { generateLogId } from './utils/ids'
@@ -240,10 +240,17 @@ async function processEvent(
   // Try market events (pool amounts, open interest, impact pools)
   // These don't return early — a single transaction can emit both
   // market events AND order/position events
+  handleMarketCreated(ctx, data, collectors.marketInfos)
   handleMarketEvent(ctx, data, collectors.marketInfos)
 
   // Try config events (SetUint — collateral factors, funding params, fee factors, etc.)
   handleConfigEvent(ctx, data, collectors.marketInfos)
+
+  // Oracle price updates — also non-exclusive (emitted alongside deposits/orders)
+  const oraclePrice = handlePriceFromOracleEvent(ctx, data)
+  if (oraclePrice) {
+    collectors.prices.set(oraclePrice.id, oraclePrice)
+  }
 
   // Try position events FIRST — they must go to the tracking map for enrichment,
   // NOT to tradeActions. Must be checked before handleOrderEvent because
