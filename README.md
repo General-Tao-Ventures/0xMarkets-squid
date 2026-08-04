@@ -1,13 +1,20 @@
 # 0xMarkets Squid
 
-Subsquid indexer for the 0xMarkets protocol on Base Sepolia.
+Subsquid indexer for the 0xMarkets protocol.
+
+- **Base mainnet (8453)** — default (`CHAIN_ID=8453`)
+- **Base Sepolia (84532)** — set `CHAIN_ID=84532` for a future testnet redeploy
+
+Self-hosted on GCP (SQD Cloud is not required). GraphQL listens on port **4350**.
+
+Self-hosted access to the legacy v2 archive gateway requires an `SQD_API_KEY` from [portal.sqd.dev/app](https://portal.sqd.dev/app). Without it the processor skips the gateway and ingests via RPC only.
 
 ## Quick Start
 
 ### Prerequisites
 
 - Node.js 18+
-- Docker (for local Postgres)
+- Docker (for Postgres)
 - Subsquid CLI: `npm i -g @subsquid/cli`
 
 ### Setup
@@ -46,7 +53,26 @@ In a separate terminal:
 npm run serve
 ```
 
-GraphQL playground available at: http://localhost:4350/graphql
+GraphQL playground: http://localhost:4350/graphql
+
+## Self-host (Docker Compose)
+
+Full stack (Postgres + processor + GraphQL):
+
+```bash
+cp .env.example .env
+# set CHAIN_ID=8453 and RPC_URL for Base mainnet
+docker compose --profile stack up -d --build
+```
+
+GraphQL: `http://<host>:4350/graphql`
+
+## Chain config
+
+| `CHAIN_ID` | Network       | Archive gateway                         | EventEmitter                                 | From block |
+|------------|---------------|-----------------------------------------|----------------------------------------------|------------|
+| `8453`     | Base mainnet  | `…/network/base-mainnet`                | `0xc989488Ef678529b81F38acE354F8027EdfB742c` | 49359429   |
+| `84532`    | Base Sepolia  | `…/network/base-sepolia`                | `0x68001935Ec7C2e3980f99435db3CabC89dea602B` | 37000000   |
 
 ## Development
 
@@ -63,22 +89,10 @@ GraphQL playground available at: http://localhost:4350/graphql
 npm run db:reset
 ```
 
-## Deployment
-
-### Deploy to Subsquid Cloud
-
-```bash
-# Login to Subsquid Cloud
-sqd auth -k YOUR_API_KEY
-
-# Deploy
-sqd deploy .
-```
-
 ## Architecture
 
 - **Processor**: Fetches events from Subsquid Archive and decodes them
-- **EventEmitter**: Generic event system - all events come through one contract
+- **EventEmitter**: Generic event system — all events come through one contract
 - **Handlers**: Route events by name to specific processing logic
 
 ## Indexed Events
