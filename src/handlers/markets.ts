@@ -66,65 +66,127 @@ const MCF_COMM = 3333000000000000000000000000n
 const MCF_CRYPTO = 6666000000000000000000000000n
 
 /**
- * Known market configurations for Base Sepolia.
+ * Known market configurations for Base mainnet (8453) and Base Sepolia (84532).
  * Used to create MarketInfo entities when first encountered,
- * since MarketCreated events predate the squid's start block.
+ * since MarketCreated events often predate the squid's start block.
  * Includes default minCollateralFactor so it's never 0 even if
  * the Config.setUint events predate the squid's start block.
  */
+const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+const USD0 = '0x3ae4474579d24a743c9016F017e76185A834d837'
+
 const KNOWN_MARKETS: Record<string, {
   indexTokenAddress: string
   longTokenAddress: string
   shortTokenAddress: string
   minCollateralFactor: bigint
 }> = {
-  // EUR/USD [USD0-USD0]
-  '0x7054eb596acf4fc1c0686c9b2cdac4ae6c6d0f33': {
-    indexTokenAddress: '0x18909CC26672376e8FDF1fa54Fc5B892dd6E2b0C',
-    longTokenAddress: '0x3ae4474579d24a743c9016F017e76185A834d837',
-    shortTokenAddress: '0x3ae4474579d24a743c9016F017e76185A834d837',
+  // ── Base mainnet (USDC-USDC) ──────────────────────────────────────────
+  // EUR/USD
+  '0xf8eef96d4af581d60d394afd613ea75c502945dc': {
+    indexTokenAddress: '0x2C6bdB9ab7d2d48710B7dd3349Ba099cdAB3B328',
+    longTokenAddress: USDC,
+    shortTokenAddress: USDC,
     minCollateralFactor: MCF_FX,
   },
-  // GBP/USD [USD0-USD0]
-  '0xa09b59adf15b4ed98a099441b84ff1eabf71b548': {
-    indexTokenAddress: '0xf7255EAb2968Fb6B8b6226eB25c6EDC2F1CcE60a',
-    longTokenAddress: '0x3ae4474579d24a743c9016F017e76185A834d837',
-    shortTokenAddress: '0x3ae4474579d24a743c9016F017e76185A834d837',
+  // GBP/USD
+  '0x518b8ceea7831a02143ceade3b68b0724964e0c8': {
+    indexTokenAddress: '0x915327F0726eC569107C1B3F38c8e0Cf87eC9e72',
+    longTokenAddress: USDC,
+    shortTokenAddress: USDC,
     minCollateralFactor: MCF_FX,
   },
-  // GOLD/USD [USD0-USD0]
-  '0x89c3b33bee4b9cd1b246be44adced870f74637a3': {
-    indexTokenAddress: '0xf4ac308123764edFB7453a7446D01277D7DEa1A7',
-    longTokenAddress: '0x3ae4474579d24a743c9016F017e76185A834d837',
-    shortTokenAddress: '0x3ae4474579d24a743c9016F017e76185A834d837',
+  // JPY/USD
+  '0x516de27eeb84cd7f86035a03f29187ac3b3448f4': {
+    indexTokenAddress: '0xF40d284eF3F79451E19D500A57539F753dd79Dbf',
+    longTokenAddress: USDC,
+    shortTokenAddress: USDC,
+    minCollateralFactor: MCF_FX,
+  },
+  // GOLD/USD
+  '0x2d5832ac0553752444d8c0dcfa654105da9897c4': {
+    indexTokenAddress: '0x82aB51eb790D1C5f1B1434057A215Eb8cF360Da5',
+    longTokenAddress: USDC,
+    shortTokenAddress: USDC,
     minCollateralFactor: MCF_COMM,
   },
-  // XAG/USD [USD0-USD0]
-  '0xf95b646d40bb4bc5e1b7a60c3d79ff5aa41bf967': {
-    indexTokenAddress: '0x25f79151C3E00ba7710EcF02192836994E36b440',
-    longTokenAddress: '0x3ae4474579d24a743c9016F017e76185A834d837',
-    shortTokenAddress: '0x3ae4474579d24a743c9016F017e76185A834d837',
+  // XAG/USD
+  '0x73cc35ac21c6675ef5204078cab42cb5fb6c0f23': {
+    indexTokenAddress: '0xA927aA364535ba04d88Fc5326D0773CC05d92c08',
+    longTokenAddress: USDC,
+    shortTokenAddress: USDC,
     minCollateralFactor: MCF_COMM,
   },
-  // USD/JPY [USD0-USD0]
-  '0xd847a999face1f862120117c33ae8faba768fd4b': {
-    indexTokenAddress: '0x7836DF766375f02D71fa3617F5F06a0712699A81',
-    longTokenAddress: '0x3ae4474579d24a743c9016F017e76185A834d837',
-    shortTokenAddress: '0x3ae4474579d24a743c9016F017e76185A834d837',
-    minCollateralFactor: MCF_FX,
-  },
-  // WBTC/USD [USD0-USD0]
-  '0x63d05da932541380df8d9ee20d8fdb4b02849398': {
-    indexTokenAddress: '0xD8a6E3FCA403d79b6AD6216b60527F51cc967D39',
-    longTokenAddress: '0x3ae4474579d24a743c9016F017e76185A834d837',
-    shortTokenAddress: '0x3ae4474579d24a743c9016F017e76185A834d837',
+  // WBTC/USD
+  '0x7d44b88a68c6222693c6aba6e7f4fd0a23393179': {
+    indexTokenAddress: '0x0555E30da8f98308EdB960aa94C0Db47230d2B9c',
+    longTokenAddress: USDC,
+    shortTokenAddress: USDC,
     minCollateralFactor: MCF_CRYPTO,
   },
-  // WETH/USD [USD0-USD0]
+  // WETH/USD
+  '0x35eccbcab7963ea442d25af1c405f8cea27d8cf7': {
+    indexTokenAddress: '0x4200000000000000000000000000000000000006',
+    longTokenAddress: USDC,
+    shortTokenAddress: USDC,
+    minCollateralFactor: MCF_CRYPTO,
+  },
+  // TAO/USD
+  '0xbc711da54efd90dd424000b8fdfa886dbffbde9d': {
+    indexTokenAddress: '0x53c87230E2A4640D4C200797147261300E7C284A',
+    longTokenAddress: USDC,
+    shortTokenAddress: USDC,
+    minCollateralFactor: MCF_CRYPTO,
+  },
+
+  // ── Base Sepolia (USD0-USD0) ──────────────────────────────────────────
+  // EUR/USD
+  '0x7054eb596acf4fc1c0686c9b2cdac4ae6c6d0f33': {
+    indexTokenAddress: '0x18909CC26672376e8FDF1fa54Fc5B892dd6E2b0C',
+    longTokenAddress: USD0,
+    shortTokenAddress: USD0,
+    minCollateralFactor: MCF_FX,
+  },
+  // GBP/USD
+  '0xa09b59adf15b4ed98a099441b84ff1eabf71b548': {
+    indexTokenAddress: '0xf7255EAb2968Fb6B8b6226eB25c6EDC2F1CcE60a',
+    longTokenAddress: USD0,
+    shortTokenAddress: USD0,
+    minCollateralFactor: MCF_FX,
+  },
+  // GOLD/USD
+  '0x89c3b33bee4b9cd1b246be44adced870f74637a3': {
+    indexTokenAddress: '0xf4ac308123764edFB7453a7446D01277D7DEa1A7',
+    longTokenAddress: USD0,
+    shortTokenAddress: USD0,
+    minCollateralFactor: MCF_COMM,
+  },
+  // XAG/USD
+  '0xf95b646d40bb4bc5e1b7a60c3d79ff5aa41bf967': {
+    indexTokenAddress: '0x25f79151C3E00ba7710EcF02192836994E36b440',
+    longTokenAddress: USD0,
+    shortTokenAddress: USD0,
+    minCollateralFactor: MCF_COMM,
+  },
+  // USD/JPY
+  '0xd847a999face1f862120117c33ae8faba768fd4b': {
+    indexTokenAddress: '0x7836DF766375f02D71fa3617F5F06a0712699A81',
+    longTokenAddress: USD0,
+    shortTokenAddress: USD0,
+    minCollateralFactor: MCF_FX,
+  },
+  // WBTC/USD
+  '0x63d05da932541380df8d9ee20d8fdb4b02849398': {
+    indexTokenAddress: '0xD8a6E3FCA403d79b6AD6216b60527F51cc967D39',
+    longTokenAddress: USD0,
+    shortTokenAddress: USD0,
+    minCollateralFactor: MCF_CRYPTO,
+  },
+  // WETH/USD
   '0x23f40e3279685413b252a6944af9a0641d3aa6ce': {
     indexTokenAddress: '0x4200000000000000000000000000000000000006',
-    longTokenAddress: '0x3ae4474579d24a743c9016F017e76185A834d837',
-    shortTokenAddress: '0x3ae4474579d24a743c9016F017e76185A834d837',
+    longTokenAddress: USD0,
+    shortTokenAddress: USD0,
     minCollateralFactor: MCF_CRYPTO,
   },
 }
@@ -146,21 +208,30 @@ export function isMarketEvent(data: DecodedEventData): boolean {
   return MARKET_EVENT_NAMES.includes(data.eventName)
 }
 
+type MarketTokenConfig = {
+  indexTokenAddress: string
+  longTokenAddress: string
+  shortTokenAddress: string
+  minCollateralFactor: bigint
+}
+
 /**
  * Get or create a MarketInfo entity for the given market address.
- * If the entity doesn't exist in the map, creates one using known config.
+ * If the entity doesn't exist in the map, creates one using known config
+ * or an optional override (e.g. from MarketCreated).
  */
 function getOrCreateMarketInfo(
   marketAddress: string,
   marketInfos: Map<string, MarketInfo>,
-  timestamp: number
+  timestamp: number,
+  override?: MarketTokenConfig,
 ): MarketInfo | null {
   const normalizedAddress = marketAddress.toLowerCase()
 
   const existing = marketInfos.get(normalizedAddress)
   if (existing) return existing
 
-  const config = KNOWN_MARKETS[normalizedAddress]
+  const config = override ?? KNOWN_MARKETS[normalizedAddress]
   if (!config) return null
 
   const marketInfo = new MarketInfo({
@@ -230,6 +301,34 @@ function getOrCreateMarketInfo(
 
   marketInfos.set(normalizedAddress, marketInfo)
   return marketInfo
+}
+
+/**
+ * Handle MarketCreated — seed MarketInfo from on-chain token addresses.
+ * Needed for markets created after the squid start block (KNOWN_MARKETS covers the rest).
+ */
+export function handleMarketCreated(
+  ctx: EventContext,
+  data: DecodedEventData,
+  marketInfos: Map<string, MarketInfo>,
+): boolean {
+  if (data.eventName !== eventKeys.MARKET_CREATED) return false
+
+  const marketToken = getAddress(data, 'marketToken')
+  const indexToken = getAddress(data, 'indexToken')
+  const longToken = getAddress(data, 'longToken')
+  const shortToken = getAddress(data, 'shortToken')
+  if (!marketToken || !indexToken || !longToken || !shortToken) return false
+
+  const timestampSeconds = Math.floor(ctx.block.timestamp / 1000)
+  const known = KNOWN_MARKETS[marketToken.toLowerCase()]
+  getOrCreateMarketInfo(marketToken, marketInfos, timestampSeconds, {
+    indexTokenAddress: indexToken,
+    longTokenAddress: longToken,
+    shortTokenAddress: shortToken,
+    minCollateralFactor: known?.minCollateralFactor ?? MCF_CRYPTO,
+  })
+  return true
 }
 
 /**

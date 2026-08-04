@@ -36,6 +36,7 @@ export const SHIFT_EXECUTED = 'ShiftExecuted'
 export const SHIFT_CANCELLED = 'ShiftCancelled'
 
 // Market Events
+export const MARKET_CREATED = 'MarketCreated'
 export const MARKET_POOL_VALUE_INFO = 'MarketPoolValueInfo'
 export const MARKET_POOL_VALUE_UPDATED = 'MarketPoolValueUpdated'
 export const POOL_AMOUNT_UPDATED = 'PoolAmountUpdated'

@@ -59,6 +59,42 @@ export function handlePriceFromPositionEvent(
 }
 
 /**
+ * Handle OraclePriceUpdate — per-token min/max prices emitted on every oracle setPrices.
+ * Snaps to hourly intervals (at most one entry per token per hour).
+ * These power long/short token returns for Uniswap-V2-style pool performance.
+ */
+export function handlePriceFromOracleEvent(
+  ctx: EventContext,
+  data: DecodedEventData,
+): Price | null {
+  if (data.eventName !== eventKeys.ORACLE_PRICE_UPDATE) {
+    return null
+  }
+
+  const token = getAddress(data, 'token')
+  const minPrice = getUint(data, 'minPrice')
+  const maxPrice = getUint(data, 'maxPrice')
+
+  if (!token || minPrice === undefined || maxPrice === undefined) {
+    return null
+  }
+
+  const timestampSeconds = Math.floor(ctx.block.timestamp / 1000)
+  const hourTs = Math.floor(timestampSeconds / 3600) * 3600
+  const id = generatePriceId(token, hourTs)
+
+  return new Price({
+    id,
+    token: token.toLowerCase(),
+    minPrice,
+    maxPrice,
+    snapshotTimestamp: hourTs,
+    isSnapshot: true,
+    type: 'oracle',
+  })
+}
+
+/**
  * Handle DepositExecuted events to track unique depositors.
  * Maintains a running count of unique depositor accounts.
  */
