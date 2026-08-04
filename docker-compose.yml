@@ -17,7 +17,7 @@ services:
       retries: 10
 
   # Optional full stack for self-host (GCP / local). Local-only: `sqd up` starts just db.
-  processor:
+  migrate:
     profiles: ["stack"]
     build: .
     depends_on:
@@ -31,9 +31,27 @@ services:
       DB_NAME: squid
       DB_USER: squid
       DB_PASS: squid
+    restart: "no"
+    command: ["npx", "squid-typeorm-migration", "apply"]
+
+  processor:
+    profiles: ["stack"]
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: squid
+      DB_USER: squid
+      DB_PASS: squid
     restart: unless-stopped
-    command: >
-      sh -c "npx squid-typeorm-migration apply && node lib/main.js"
+    command: ["node", "lib/main.js"]
 
   api:
     profiles: ["stack"]
@@ -41,8 +59,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      processor:
-        condition: service_started
+      migrate:
+        condition: service_completed_successfully
     env_file:
       - .env
     environment:
