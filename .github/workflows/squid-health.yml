@@ -2,13 +2,9 @@ name: Squid health
 
 on:
   schedule:
-    # Every 30 minutes
+    # Every 30 minutes — production lag only (not tied to PR CI)
     - cron: "*/30 * * * *"
   workflow_dispatch:
-  pull_request:
-    paths:
-      - ".github/workflows/squid-health.yml"
-      - "src/handlers/aggregates.ts"
 
 jobs:
   lag-check:
