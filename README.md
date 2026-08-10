@@ -74,6 +74,46 @@ GraphQL: `http://<host>:4350/graphql`
 | `8453`     | Base mainnet  | `…/network/base-mainnet`                | `0xc989488Ef678529b81F38acE354F8027EdfB742c` | 49359429   |
 | `84532`    | Base Sepolia  | `…/network/base-sepolia`                | `0x68001935Ec7C2e3980f99435db3CabC89dea602B` | 37000000   |
 
+### Sepolia volume / stats note
+
+The Interface points Base Sepolia at the legacy cloud endpoint
+`https://zero-x-markets.squids.live/0xmarkets-base-sepolia@v1/api/graphql`, which currently
+returns **empty** `volumeInfos`. Treat **24h volume on Sepolia previews as unsupported** until a
+Sepolia processor is redeployed against the current EventEmitter from-block. Production /
+mainnet previews use the self-hosted GCP Squid below — that is the source of truth for volume.
+
+## Ops: GraphQL health (GCP mainnet)
+
+Default GraphQL: `http://34.10.239.169:4350/graphql` (override with `SQUID_GRAPHQL_URL`).
+
+### Checklist after deploy or “volume stuck on …”
+
+1. Containers healthy (`docker compose --profile stack ps`) and Postgres has free disk.
+2. Processor height vs Base tip (lag should stay under ~200 blocks when RPC/archive are healthy):
+
+```bash
+SQUID_URL="${SQUID_GRAPHQL_URL:-http://34.10.239.169:4350/graphql}"
+
+curl -sS -X POST "$SQUID_URL" -H 'content-type: application/json' \
+  -d '{"query":"{ squidStatus { height finalizedHeight } }"}'
+```
+
+3. Markets with 24h volume (quiet markets correctly have **no** row — the Interface zero-fills `$0`):
+
+```bash
+TS=$(($(date +%s)/3600*3600 - 86400))
+curl -sS -X POST "$SQUID_URL" -H 'content-type: application/json' \
+  -d "{\"query\":\"{ volumeInfos(where: { timestamp_gte: $TS, period_eq: \\\"1h\\\" }, limit: 10000) { market volumeUsd timestamp } }\"}"
+```
+
+4. After a known trade on a non-ETH market, confirm a new `volumeInfos` `1h` row within ~1–2 minutes
+   (`{marketLower}-1h-{hourTs}`). Volume is written only from `PositionIncrease` / `PositionDecrease`
+   (`src/handlers/aggregates.ts`). The `positionsVolumes` entity is unused — do not expect rows there.
+
+A scheduled / manually dispatched GitHub Action (`.github/workflows/squid-health.yml`) curls the
+same endpoint and fails when lag exceeds 200 blocks or GraphQL is unreachable. It does **not** run
+on pull requests, so PR CI stays independent of live GCP lag.
+
 ## Development
 
 ### Update Schema

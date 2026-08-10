@@ -1,0 +1,40 @@
+name: Squid health
+
+on:
+  schedule:
+    # Every 30 minutes — production lag only (not tied to PR CI)
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  lag-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check Squid GraphQL lag vs Base tip
+        env:
+          SQUID_GRAPHQL_URL: ${{ vars.SQUID_GRAPHQL_URL }}
+          MAX_LAG_BLOCKS: "200"
+        run: |
+          set -euo pipefail
+          SQUID_GRAPHQL_URL="${SQUID_GRAPHQL_URL:-http://34.10.239.169:4350/graphql}"
+
+          squid_json=$(curl -sS -m 20 -X POST "$SQUID_GRAPHQL_URL" \
+            -H 'content-type: application/json' \
+            -d '{"query":"{ squidStatus { height finalizedHeight } }"}')
+
+          height=$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["data"]["squidStatus"]["height"])' <<<"$squid_json")
+
+          tip_hex=$(curl -sS -m 20 -X POST https://mainnet.base.org \
+            -H 'content-type: application/json' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')
+          tip=$(python3 -c "print(int('$tip_hex', 16))")
+
+          lag=$((tip - height))
+          echo "squid_height=$height base_tip=$tip lag=$lag max=$MAX_LAG_BLOCKS"
+
+          if [ "$lag" -gt "$MAX_LAG_BLOCKS" ]; then
+            echo "::error::Squid lag ${lag} exceeds ${MAX_LAG_BLOCKS} blocks"
+            exit 1
+          fi
