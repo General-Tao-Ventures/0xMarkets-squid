@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import { MoreThanOrEqual } from 'typeorm'
 import { Store } from '@subsquid/typeorm-store'
 import { processor, db, EVENT_EMITTER_ADDRESS, EVENT_LOG1_TOPIC, EVENT_LOG2_TOPIC } from './processor'
 import { decodeEventLog, DecodedEventData } from './decoding/eventDecoder'
@@ -7,9 +8,10 @@ import { handlePositionAndAccountStats, handleDepositAccountStats, COMPETITION_P
 import * as eventKeys from './decoding/eventKeys'
 import { handlePriceFromPositionEvent, handlePriceFromOracleEvent, handlePlatformStatFromDeposit } from './handlers/analytics'
 import { handleDistributionEvent } from './handlers/distributions'
+import { handleReferralFromPositionFeesEvent, handleAffiliateRewardEvent } from './handlers/referrals'
 import { handleMarketEvent, handleMarketCreated, handleConfigEvent } from './handlers/markets'
 import { handleVolumeFromPositionEvent, handleFeesFromPositionFeesEvent, handleAprSnapshotFromFees, finalizeAprSnapshots } from './handlers/aggregates'
-import { TradeAction, Transaction, Price, PlatformStat, Distribution, MarketInfo, Position, AccountStat, PeriodAccountStat, VolumeInfo, FeesInfo, AprSnapshot } from './model'
+import { TradeAction, Transaction, Price, PlatformStat, Distribution, MarketInfo, Position, AccountStat, PeriodAccountStat, VolumeInfo, FeesInfo, AprSnapshot, AffiliateStat, PeriodAffiliateStat, ReferredTrader, AffiliateReward } from './model'
 import { generateLogId } from './utils/ids'
 
 processor.run(db, async (ctx) => {
@@ -30,6 +32,12 @@ processor.run(db, async (ctx) => {
   const volumeInfos: Map<string, VolumeInfo> = new Map()
   const feesInfos: Map<string, FeesInfo> = new Map()
   const aprSnapshots: Map<string, AprSnapshot> = new Map()
+
+  // Referral attribution maps
+  const affiliateStats: Map<string, AffiliateStat> = new Map()
+  const periodAffiliateStats: Map<string, PeriodAffiliateStat> = new Map()
+  const referredTraders: Map<string, ReferredTrader> = new Map()
+  const affiliateRewards: AffiliateReward[] = []
 
   // Tracking maps for cross-event enrichment
   const positionEventsByOrderKey: Map<string, TradeAction> = new Map()
@@ -88,6 +96,26 @@ processor.run(db, async (ctx) => {
     feesInfos.set(existingTotalFees.id, existingTotalFees)
   }
 
+  // Pre-load referral state. This is REQUIRED, not an optimisation: store.upsert replaces whole
+  // rows, so any bucket not loaded here would be overwritten by this batch instead of incremented.
+  // Affiliate and trader rows are all-time and few, so they load wholesale; daily buckets only need
+  // the ones a batch can still be writing to (today, plus yesterday to survive a rollover).
+  const existingAffiliateStats = await ctx.store.find(AffiliateStat, {})
+  for (const a of existingAffiliateStats) {
+    affiliateStats.set(a.id, a)
+  }
+  const existingReferredTraders = await ctx.store.find(ReferredTrader, {})
+  for (const t of existingReferredTraders) {
+    referredTraders.set(t.id, t)
+  }
+  const recentPeriodStart = Math.floor(Date.now() / 1000 / 86400) * 86400 - 86400
+  const existingPeriodAffiliateStats = await ctx.store.find(PeriodAffiliateStat, {
+    where: { periodStart: MoreThanOrEqual(recentPeriodStart) },
+  })
+  for (const p of existingPeriodAffiliateStats) {
+    periodAffiliateStats.set(p.id, p)
+  }
+
   for (const block of ctx.blocks) {
     for (let i = 0; i < block.logs.length; i++) {
       const log = block.logs[i]
@@ -131,6 +159,10 @@ processor.run(db, async (ctx) => {
           volumeInfos,
           feesInfos,
           aprSnapshots,
+          affiliateStats,
+          periodAffiliateStats,
+          referredTraders,
+          affiliateRewards,
           seenDepositors,
           positionEventsByOrderKey,
           orderCreatedByOrderKey,
@@ -210,6 +242,28 @@ processor.run(db, async (ctx) => {
     await ctx.store.upsert([...aprSnapshots.values()])
     ctx.log.info(`Upserted ${aprSnapshots.size} APR snapshots`)
   }
+
+  // Referral entities. AffiliateReward has a Transaction relation, so it must land after the
+  // transactions upsert above.
+  if (affiliateStats.size > 0) {
+    await ctx.store.upsert([...affiliateStats.values()])
+    ctx.log.info(`Upserted ${affiliateStats.size} affiliate stats`)
+  }
+
+  if (referredTraders.size > 0) {
+    await ctx.store.upsert([...referredTraders.values()])
+    ctx.log.info(`Upserted ${referredTraders.size} referred traders`)
+  }
+
+  if (periodAffiliateStats.size > 0) {
+    await ctx.store.upsert([...periodAffiliateStats.values()])
+    ctx.log.info(`Upserted ${periodAffiliateStats.size} affiliate period stats`)
+  }
+
+  if (affiliateRewards.length > 0) {
+    await ctx.store.insert(affiliateRewards)
+    ctx.log.info(`Inserted ${affiliateRewards.length} affiliate rewards`)
+  }
 })
 
 interface EntityCollectors {
@@ -225,6 +279,10 @@ interface EntityCollectors {
   volumeInfos: Map<string, VolumeInfo>
   feesInfos: Map<string, FeesInfo>
   aprSnapshots: Map<string, AprSnapshot>
+  affiliateStats: Map<string, AffiliateStat>
+  periodAffiliateStats: Map<string, PeriodAffiliateStat>
+  referredTraders: Map<string, ReferredTrader>
+  affiliateRewards: AffiliateReward[]
   seenDepositors: Set<string>
   // Tracking maps for cross-event enrichment
   positionEventsByOrderKey: Map<string, TradeAction>
@@ -292,6 +350,18 @@ async function processEvent(
     // Aggregate fees and APR snapshots from fee events
     handleFeesFromPositionFeesEvent(ctx, data, collectors.feesInfos)
     handleAprSnapshotFromFees(ctx, data, collectors.aprSnapshots, collectors.marketInfos)
+
+    // Referral attribution. Must sit inside this block: the branch returns, so a handler placed
+    // after it would never see PositionFeesCollected. The handler applies its own exact event-name
+    // guard, because handlePositionFeesEvent above also accepts PositionFeesInfo — an identical
+    // payload that would otherwise double every affiliate's volume.
+    handleReferralFromPositionFeesEvent(
+      ctx,
+      data,
+      collectors.affiliateStats,
+      collectors.periodAffiliateStats,
+      collectors.referredTraders,
+    )
     return
   }
 
@@ -316,6 +386,16 @@ async function processEvent(
 
     // Track totalDepositedUsd0 per account
     handleDepositAccountStats(ctx, data, collectors.accountStats, collectors.periodAccountStats)
+    return
+  }
+
+  // Affiliate reward ledger. Must precede the distribution branch below: AffiliateRewardUpdated
+  // currently falls through to it and is stored as an empty-array Distribution row, silently
+  // dropping the amount.
+  const affiliateRewardResult = handleAffiliateRewardEvent(ctx, data)
+  if (affiliateRewardResult) {
+    collectors.transactions.set(affiliateRewardResult.transaction.id, affiliateRewardResult.transaction)
+    collectors.affiliateRewards.push(affiliateRewardResult.reward)
     return
   }
 

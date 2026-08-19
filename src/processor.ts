@@ -65,7 +65,9 @@ export const processor = processorBuilder
   })
   .setFinalityConfirmation(10)
   .setBlockRange({
-    from: chain.from
+    // BLOCK_FROM overrides the deployment's first block. Needed to index a chain fork or to
+    // re-sync a window without replaying from genesis; production leaves it unset.
+    from: process.env.BLOCK_FROM ? parseInt(process.env.BLOCK_FROM, 10) : chain.from
   })
   .addLog({
     address: [EVENT_EMITTER_ADDRESS],
