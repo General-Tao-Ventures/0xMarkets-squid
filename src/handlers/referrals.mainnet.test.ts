@@ -4,7 +4,7 @@ import { join } from 'path'
 import { decodeEventLog, DecodedEventData } from '../decoding/eventDecoder'
 import { EventContext } from './orders'
 import { handleReferralFromPositionFeesEvent } from './referrals'
-import { AffiliateStat, PeriodAffiliateStat, ReferredTrader } from '../model'
+import { AffiliateStat, PeriodAffiliateStat, PeriodAffiliateTrader, ReferredTrader } from '../model'
 
 /**
  * Replay of REAL Base mainnet logs, captured from the EventEmitter around block 50.11-50.15M.
@@ -31,11 +31,12 @@ function replay(events: DecodedEventData[], patchAffiliate?: string) {
   const affiliateStats = new Map<string, AffiliateStat>()
   const periodAffiliateStats = new Map<string, PeriodAffiliateStat>()
   const referredTraders = new Map<string, ReferredTrader>()
+  const periodAffiliateTraders = new Map<string, PeriodAffiliateTrader>()
   events.forEach((e, i) => {
     const event = patchAffiliate
       ? { ...e, addressItems: new Map(e.addressItems).set('affiliate', patchAffiliate) }
       : e
-    handleReferralFromPositionFeesEvent(ctxAt(1_770_000_000 + i, i), event, affiliateStats, periodAffiliateStats, referredTraders)
+    handleReferralFromPositionFeesEvent(ctxAt(1_770_000_000 + i, i), event, affiliateStats, periodAffiliateStats, referredTraders, periodAffiliateTraders)
   })
   return { affiliateStats, periodAffiliateStats, referredTraders }
 }

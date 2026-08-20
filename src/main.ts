@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { MoreThanOrEqual } from 'typeorm'
 import { Store } from '@subsquid/typeorm-store'
-import { processor, db, EVENT_EMITTER_ADDRESS, EVENT_LOG1_TOPIC, EVENT_LOG2_TOPIC } from './processor'
+import { processor, db, EVENT_EMITTER_ADDRESS, EVENT_LOG1_TOPIC, EVENT_LOG2_TOPIC, REFERRAL_STORAGE_ADDRESS } from './processor'
 import { decodeEventLog, DecodedEventData } from './decoding/eventDecoder'
 import { handleOrderEvent, handlePositionEvent, handlePositionFeesEvent, PositionFeeData, EventContext } from './handlers/orders'
 import { handlePositionAndAccountStats, handleDepositAccountStats, COMPETITION_PERIODS } from './handlers/accountStats'
@@ -9,9 +9,10 @@ import * as eventKeys from './decoding/eventKeys'
 import { handlePriceFromPositionEvent, handlePriceFromOracleEvent, handlePlatformStatFromDeposit } from './handlers/analytics'
 import { handleDistributionEvent } from './handlers/distributions'
 import { handleReferralFromPositionFeesEvent, handleAffiliateRewardEvent } from './handlers/referrals'
+import { handleReferralStorageLog } from './handlers/referralRegistrations'
 import { handleMarketEvent, handleMarketCreated, handleConfigEvent } from './handlers/markets'
 import { handleVolumeFromPositionEvent, handleFeesFromPositionFeesEvent, handleAprSnapshotFromFees, finalizeAprSnapshots } from './handlers/aggregates'
-import { TradeAction, Transaction, Price, PlatformStat, Distribution, MarketInfo, Position, AccountStat, PeriodAccountStat, VolumeInfo, FeesInfo, AprSnapshot, AffiliateStat, PeriodAffiliateStat, ReferredTrader, AffiliateReward } from './model'
+import { TradeAction, Transaction, Price, PlatformStat, Distribution, MarketInfo, Position, AccountStat, PeriodAccountStat, VolumeInfo, FeesInfo, AprSnapshot, AffiliateStat, PeriodAffiliateStat, ReferredTrader, AffiliateReward, ReferralCode, PeriodAffiliateTrader } from './model'
 import { generateLogId } from './utils/ids'
 
 processor.run(db, async (ctx) => {
@@ -38,6 +39,8 @@ processor.run(db, async (ctx) => {
   const periodAffiliateStats: Map<string, PeriodAffiliateStat> = new Map()
   const referredTraders: Map<string, ReferredTrader> = new Map()
   const affiliateRewards: AffiliateReward[] = []
+  const referralCodes: Map<string, ReferralCode> = new Map()
+  const periodAffiliateTraders: Map<string, PeriodAffiliateTrader> = new Map()
 
   // Tracking maps for cross-event enrichment
   const positionEventsByOrderKey: Map<string, TradeAction> = new Map()
@@ -108,6 +111,11 @@ processor.run(db, async (ctx) => {
   for (const t of existingReferredTraders) {
     referredTraders.set(t.id, t)
   }
+  const existingCodes = await ctx.store.find(ReferralCode, {})
+  for (const c of existingCodes) {
+    referralCodes.set(c.id, c)
+  }
+
   const recentPeriodStart = Math.floor(Date.now() / 1000 / 86400) * 86400 - 86400
   const existingPeriodAffiliateStats = await ctx.store.find(PeriodAffiliateStat, {
     where: { periodStart: MoreThanOrEqual(recentPeriodStart) },
@@ -115,10 +123,32 @@ processor.run(db, async (ctx) => {
   for (const p of existingPeriodAffiliateStats) {
     periodAffiliateStats.set(p.id, p)
   }
+  const existingParticipation = await ctx.store.find(PeriodAffiliateTrader, {
+    where: { periodStart: MoreThanOrEqual(recentPeriodStart) },
+  })
+  for (const p of existingParticipation) {
+    periodAffiliateTraders.set(p.id, p)
+  }
 
   for (const block of ctx.blocks) {
     for (let i = 0; i < block.logs.length; i++) {
       const log = block.logs[i]
+
+      // ReferralStorage: plain Solidity events, decoded separately from the EventEmitter format.
+      if (log.address.toLowerCase() === REFERRAL_STORAGE_ADDRESS) {
+        try {
+          handleReferralStorageLog(
+            { store: ctx.store, block: { height: block.header.height, timestamp: block.header.timestamp }, log: { id: generateLogId(block.header.height, log.logIndex), transactionHash: log.transactionHash } } as any,
+            log.topics[0].toLowerCase(),
+            log.data,
+            referralCodes,
+            referredTraders,
+          )
+        } catch (err) {
+          ctx.log.warn(`Failed to handle ReferralStorage log at ${block.header.height}: ${err}`)
+        }
+        continue
+      }
 
       // Only process EventEmitter logs
       if (log.address.toLowerCase() !== EVENT_EMITTER_ADDRESS) {
@@ -162,6 +192,7 @@ processor.run(db, async (ctx) => {
           affiliateStats,
           periodAffiliateStats,
           referredTraders,
+          periodAffiliateTraders,
           affiliateRewards,
           seenDepositors,
           positionEventsByOrderKey,
@@ -250,9 +281,18 @@ processor.run(db, async (ctx) => {
     ctx.log.info(`Upserted ${affiliateStats.size} affiliate stats`)
   }
 
+  if (referralCodes.size > 0) {
+    await ctx.store.upsert([...referralCodes.values()])
+    ctx.log.info(`Upserted ${referralCodes.size} referral codes`)
+  }
+
   if (referredTraders.size > 0) {
     await ctx.store.upsert([...referredTraders.values()])
     ctx.log.info(`Upserted ${referredTraders.size} referred traders`)
+  }
+
+  if (periodAffiliateTraders.size > 0) {
+    await ctx.store.upsert([...periodAffiliateTraders.values()])
   }
 
   if (periodAffiliateStats.size > 0) {
@@ -282,6 +322,7 @@ interface EntityCollectors {
   affiliateStats: Map<string, AffiliateStat>
   periodAffiliateStats: Map<string, PeriodAffiliateStat>
   referredTraders: Map<string, ReferredTrader>
+  periodAffiliateTraders: Map<string, PeriodAffiliateTrader>
   affiliateRewards: AffiliateReward[]
   seenDepositors: Set<string>
   // Tracking maps for cross-event enrichment
@@ -361,6 +402,7 @@ async function processEvent(
       collectors.affiliateStats,
       collectors.periodAffiliateStats,
       collectors.referredTraders,
+      collectors.periodAffiliateTraders,
     )
     return
   }

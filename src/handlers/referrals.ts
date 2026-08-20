@@ -1,6 +1,7 @@
 import {
   AffiliateStat,
   PeriodAffiliateStat,
+  PeriodAffiliateTrader,
   ReferredTrader,
   AffiliateReward,
   Transaction,
@@ -50,6 +51,7 @@ export function handleReferralFromPositionFeesEvent(
   affiliateStats: Map<string, AffiliateStat>,
   periodAffiliateStats: Map<string, PeriodAffiliateStat>,
   referredTraders: Map<string, ReferredTrader>,
+  periodAffiliateTraders: Map<string, PeriodAffiliateTrader>,
 ): void {
   if (data.eventName !== eventKeys.POSITION_FEES_COLLECTED) return
 
@@ -89,12 +91,18 @@ export function handleReferralFromPositionFeesEvent(
   const existingTrader = referredTraders.get(traderId)
   const isNewReferredTrader = !existingTrader
 
+  // A row may already exist from the registration feed with isFunded false; the first fill is
+  // what funds it, and that transition is what increments the affiliate's funded count.
+  const wasFunded = existingTrader?.isFunded ?? false
+
   if (existingTrader) {
     existingTrader.volumeUsd += volumeUsd
     existingTrader.tradesCount += 1
     existingTrader.feesPaidUsd += feesGeneratedUsd
     existingTrader.rebateGeneratedUsd += affiliateRewardUsd
     existingTrader.lastTradeTimestamp = timestampSeconds
+    if (!existingTrader.firstTradeTimestamp) existingTrader.firstTradeTimestamp = timestampSeconds
+    existingTrader.isFunded = true
   } else {
     referredTraders.set(
       traderId,
@@ -103,6 +111,8 @@ export function handleReferralFromPositionFeesEvent(
         affiliate,
         trader,
         referralCode,
+        isFunded: true,
+        registeredAt: null,
         firstTradeTimestamp: timestampSeconds,
         lastTradeTimestamp: timestampSeconds,
         volumeUsd,
@@ -117,8 +127,9 @@ export function handleReferralFromPositionFeesEvent(
   if (existingStat) {
     existingStat.volumeUsd += volumeUsd
     existingStat.tradesCount += 1
-    // Counts distinct traders, not trades — only bump it the first time a trader appears.
-    if (isNewReferredTrader) existingStat.referredTradersCount += 1
+    // Counts distinct FUNDED traders. A trader who registered earlier already has a row, so the
+    // trigger is the isFunded transition, not the row appearing.
+    if (isNewReferredTrader || !wasFunded) existingStat.referredTradersCount += 1
     existingStat.feesGeneratedUsd += feesGeneratedUsd
     existingStat.totalRebateUsd += totalRebateUsd
     existingStat.affiliateRewardUsd += affiliateRewardUsd
@@ -146,10 +157,23 @@ export function handleReferralFromPositionFeesEvent(
   // Daily bucket. Callers MUST preload recent buckets before the batch, because store.upsert
   // replaces whole rows — an unloaded bucket is overwritten rather than incremented.
   const periodId = `${affiliate}-1d-${dayTs}`
+
+  // Distinct-trader participation for the day. The marker row is what makes tradersActive safe
+  // across batches; a counter alone would re-count a trader who fills again later in the day.
+  const participationId = `${periodId}-${trader}`
+  const isNewParticipant = !periodAffiliateTraders.has(participationId)
+  if (isNewParticipant) {
+    periodAffiliateTraders.set(
+      participationId,
+      new PeriodAffiliateTrader({ id: participationId, affiliate, trader, periodStart: dayTs }),
+    )
+  }
+
   const existingPeriod = periodAffiliateStats.get(periodId)
   if (existingPeriod) {
     existingPeriod.volumeUsd += volumeUsd
     existingPeriod.tradesCount += 1
+    if (isNewParticipant) existingPeriod.tradersActive += 1
     existingPeriod.feesGeneratedUsd += feesGeneratedUsd
     existingPeriod.affiliateRewardUsd += affiliateRewardUsd
   } else {
@@ -161,6 +185,7 @@ export function handleReferralFromPositionFeesEvent(
         periodStart: dayTs,
         volumeUsd,
         tradesCount: 1,
+        tradersActive: 1,
         feesGeneratedUsd,
         affiliateRewardUsd,
       }),

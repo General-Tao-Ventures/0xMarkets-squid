@@ -514,8 +514,23 @@ type PeriodAffiliateStat @entity {
   periodStart: Int! @index
   volumeUsd: BigInt!
   tradesCount: Int!
+  "Distinct traders who transacted in this period. Maintained via PeriodAffiliateTrader."
+  tradersActive: Int!
   feesGeneratedUsd: BigInt!
   affiliateRewardUsd: BigInt!
+}
+
+"""
+One row per (affiliate, day, trader). Exists purely so `tradersActive` can be counted without
+double counting a trader who fills several times in a day — a running counter alone cannot know
+whether a trader has already been seen in that period, and the batch that sees them may not be the
+batch that created the bucket.
+"""
+type PeriodAffiliateTrader @entity {
+  id: ID!
+  affiliate: String! @index
+  trader: String! @index
+  periodStart: Int! @index
 }
 
 """
@@ -528,12 +543,34 @@ type ReferredTrader @entity {
   affiliate: String! @index
   trader: String! @index
   referralCode: String! @index
-  firstTradeTimestamp: Int! @index
-  lastTradeTimestamp: Int! @index
+  """
+  True once the trader has taken a fee-bearing fill. A row can exist without this: attaching a
+  code is recorded from ReferralStorage, trading is recorded from PositionFeesCollected, and the
+  two are separate events. Only funded traders count toward a tier.
+  """
+  isFunded: Boolean! @index
+  "When the code was attached. Null for rows first seen through a fill rather than a registration."
+  registeredAt: Int
+  "Null until the trader has actually traded."
+  firstTradeTimestamp: Int @index
+  lastTradeTimestamp: Int @index
   volumeUsd: BigInt!
   tradesCount: Int!
   feesPaidUsd: BigInt!
   rebateGeneratedUsd: BigInt!
+}
+
+"""
+Code ownership, read from ReferralStorage rather than inferred. Needed to attribute a trader who
+has attached a code but not yet traded — at that point no fee event exists to carry the affiliate.
+"""
+type ReferralCode @entity {
+  id: ID!
+  "bytes32, right-padded."
+  code: String! @index
+  owner: String! @index
+  registeredAt: Int!
+  blockNumber: Int!
 }
 
 """

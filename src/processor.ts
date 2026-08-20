@@ -7,6 +7,7 @@ type ChainConfig = {
   gateway: string
   defaultRpc: string
   eventEmitter: string
+  referralStorage: string
   from: number
 }
 
@@ -17,12 +18,16 @@ const CHAIN_CONFIG: Record<number, ChainConfig> = {
     defaultRpc: 'https://mainnet.base.org',
     // deployments/base/EventEmitter.json
     eventEmitter: '0xc989488Ef678529b81F38acE354F8027EdfB742c',
+    // deployments/base/ReferralStorage.json — code registration and trader attachment do NOT go
+    // through the EventEmitter, so they need their own subscription.
+    referralStorage: '0x034890104BdeAE29F30B6AB89cC80e58666D1a02',
     from: 49_359_429,
   },
   84532: {
     gateway: 'https://v2.archive.subsquid.io/network/base-sepolia',
     defaultRpc: 'https://sepolia.base.org',
     eventEmitter: '0x68001935Ec7C2e3980f99435db3CabC89dea602B',
+    referralStorage: '0x29D5533a26ac87C28972d277CEFf2EC00843c5A7',
     from: 37_000_000,
   },
 }
@@ -33,6 +38,13 @@ if (!chain) {
 }
 
 export const EVENT_EMITTER_ADDRESS = chain.eventEmitter.toLowerCase()
+export const REFERRAL_STORAGE_ADDRESS = chain.referralStorage.toLowerCase()
+
+// ReferralStorage emits plain Solidity events, not EventLog1/2, so these are ordinary topic0 hashes.
+export const REGISTER_CODE_TOPIC = '0x04f82286a2a3b2ee5c8555de8304dfe2ea70991613213184b73a9e408d2d8029'
+export const SET_TRADER_REFERRAL_CODE_TOPIC = '0x43825f14567dda057e821be2e51a5aa79aa51f3907a647e3ed2bd486a01050f1'
+export const SET_CODE_OWNER_TOPIC = '0x5640856798d41ce9ca0a109b54c20a06eb99ba9c36ab4547115dafb8473cf397'
+export const GOV_SET_CODE_OWNER_TOPIC = '0x6431f88c655dd0e2b8d09b6405c007c515c66d67f2998e69c902873a8c8f3e97'
 
 // EventLog1 and EventLog2 topic hashes
 // EventLog1(address,string,string,tuple)
@@ -72,6 +84,16 @@ export const processor = processorBuilder
   .addLog({
     address: [EVENT_EMITTER_ADDRESS],
     topic0: [EVENT_LOG1_TOPIC, EVENT_LOG2_TOPIC],
+    transaction: true
+  })
+  .addLog({
+    address: [REFERRAL_STORAGE_ADDRESS],
+    topic0: [
+      REGISTER_CODE_TOPIC,
+      SET_TRADER_REFERRAL_CODE_TOPIC,
+      SET_CODE_OWNER_TOPIC,
+      GOV_SET_CODE_OWNER_TOPIC,
+    ],
     transaction: true
   })
   .setFields({

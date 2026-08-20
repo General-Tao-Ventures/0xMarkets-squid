@@ -1,4 +1,4 @@
-import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, StringColumn as StringColumn_, Index as Index_, IntColumn as IntColumn_, BigIntColumn as BigIntColumn_} from "@subsquid/typeorm-store"
+import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, StringColumn as StringColumn_, Index as Index_, BooleanColumn as BooleanColumn_, IntColumn as IntColumn_, BigIntColumn as BigIntColumn_} from "@subsquid/typeorm-store"
 
 /**
  * The attribution link: one row per (affiliate, trader) pair, created on that
@@ -26,13 +26,31 @@ export class ReferredTrader {
     @StringColumn_({nullable: false})
     referralCode!: string
 
+    /**
+     * True once the trader has taken a fee-bearing fill. A row can exist without this: attaching a
+     * code is recorded from ReferralStorage, trading is recorded from PositionFeesCollected, and the
+     * two are separate events. Only funded traders count toward a tier.
+     */
     @Index_()
-    @IntColumn_({nullable: false})
-    firstTradeTimestamp!: number
+    @BooleanColumn_({nullable: false})
+    isFunded!: boolean
+
+    /**
+     * When the code was attached. Null for rows first seen through a fill rather than a registration.
+     */
+    @IntColumn_({nullable: true})
+    registeredAt!: number | undefined | null
+
+    /**
+     * Null until the trader has actually traded.
+     */
+    @Index_()
+    @IntColumn_({nullable: true})
+    firstTradeTimestamp!: number | undefined | null
 
     @Index_()
-    @IntColumn_({nullable: false})
-    lastTradeTimestamp!: number
+    @IntColumn_({nullable: true})
+    lastTradeTimestamp!: number | undefined | null
 
     @BigIntColumn_({nullable: false})
     volumeUsd!: bigint

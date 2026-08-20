@@ -27,6 +27,12 @@ export class PeriodAffiliateStat {
     @IntColumn_({nullable: false})
     tradesCount!: number
 
+    /**
+     * Distinct traders who transacted in this period. Maintained via PeriodAffiliateTrader.
+     */
+    @IntColumn_({nullable: false})
+    tradersActive!: number
+
     @BigIntColumn_({nullable: false})
     feesGeneratedUsd!: bigint
 

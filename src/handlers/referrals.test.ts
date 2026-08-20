@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { AffiliateStat, PeriodAffiliateStat, ReferredTrader } from '../model'
+import { AffiliateStat, PeriodAffiliateStat, PeriodAffiliateTrader, ReferredTrader } from '../model'
 import { DecodedEventData } from '../decoding/eventDecoder'
 import { EventContext } from './orders'
 import { handleReferralFromPositionFeesEvent, handleAffiliateRewardEvent } from './referrals'
@@ -91,6 +91,7 @@ describe('handleReferralFromPositionFeesEvent', () => {
   let affiliateStats: Map<string, AffiliateStat>
   let periodAffiliateStats: Map<string, PeriodAffiliateStat>
   let referredTraders: Map<string, ReferredTrader>
+  let periodAffiliateTraders: Map<string, PeriodAffiliateTrader>
   const dayStartMs = 1_700_000_000_000
   const dayTs = Math.floor(dayStartMs / 1000 / 86400) * 86400
 
@@ -98,10 +99,11 @@ describe('handleReferralFromPositionFeesEvent', () => {
     affiliateStats = new Map()
     periodAffiliateStats = new Map()
     referredTraders = new Map()
+    periodAffiliateTraders = new Map()
   })
 
   function run(ctx: EventContext, data: DecodedEventData) {
-    handleReferralFromPositionFeesEvent(ctx, data, affiliateStats, periodAffiliateStats, referredTraders)
+    handleReferralFromPositionFeesEvent(ctx, data, affiliateStats, periodAffiliateStats, referredTraders, periodAffiliateTraders)
   }
 
   it('creates all three rows with the expected ids and converted USD amounts', () => {
