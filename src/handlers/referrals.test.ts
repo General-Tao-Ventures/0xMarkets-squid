@@ -106,6 +106,45 @@ describe('handleReferralFromPositionFeesEvent', () => {
     handleReferralFromPositionFeesEvent(ctx, data, affiliateStats, periodAffiliateStats, referredTraders, periodAffiliateTraders)
   }
 
+  it('stamps firstTradeTimestamp on the first fill of a row created by a code transfer', () => {
+    // A transfer creates the scoreboard row before its owner has ever traded, so the field starts
+    // at zero. Only the fill path can fill it in, and it previously updated lastTradeTimestamp
+    // alone — leaving these partners stuck at epoch forever.
+    affiliateStats.set(
+      AFFILIATE_LOWER,
+      new AffiliateStat({
+        id: AFFILIATE_LOWER,
+        affiliate: AFFILIATE_LOWER,
+        volumeUsd: 0n,
+        tradesCount: 0,
+        referredTradersCount: 1,
+        feesGeneratedUsd: 0n,
+        totalRebateUsd: 0n,
+        affiliateRewardUsd: 0n,
+        traderDiscountUsd: 0n,
+        firstTradeTimestamp: 0,
+        lastTradeTimestamp: 0,
+      }),
+    )
+
+    run(makeCtx(dayStartMs), makeFeesEvent())
+
+    const stat = affiliateStats.get(AFFILIATE_LOWER)!
+    const expected = Math.floor(dayStartMs / 1000)
+    expect(stat.firstTradeTimestamp).toBe(expected)
+    expect(stat.lastTradeTimestamp).toBe(expected)
+  })
+
+  it('does not move firstTradeTimestamp once it is set', () => {
+    run(makeCtx(dayStartMs), makeFeesEvent())
+    const first = affiliateStats.get(AFFILIATE_LOWER)!.firstTradeTimestamp
+
+    run(makeCtx(dayStartMs + 3_600_000), makeFeesEvent())
+    const stat = affiliateStats.get(AFFILIATE_LOWER)!
+    expect(stat.firstTradeTimestamp).toBe(first)
+    expect(stat.lastTradeTimestamp).toBe(Math.floor((dayStartMs + 3_600_000) / 1000))
+  })
+
   it('creates all three rows with the expected ids and converted USD amounts', () => {
     run(makeCtx(dayStartMs), makeFeesEvent())
 

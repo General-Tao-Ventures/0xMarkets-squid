@@ -134,6 +134,10 @@ export function handleReferralFromPositionFeesEvent(
     existingStat.totalRebateUsd += totalRebateUsd
     existingStat.affiliateRewardUsd += affiliateRewardUsd
     existingStat.traderDiscountUsd += traderDiscountUsd
+    // A row can exist before its owner has ever traded — a code transferred to someone new creates
+    // one to carry the funded-referral count. Their first fill is this one, so stamp it rather than
+    // leaving the field at epoch forever.
+    if (!existingStat.firstTradeTimestamp) existingStat.firstTradeTimestamp = timestampSeconds
     existingStat.lastTradeTimestamp = timestampSeconds
   } else {
     affiliateStats.set(

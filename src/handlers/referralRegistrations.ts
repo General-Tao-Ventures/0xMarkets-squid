@@ -162,6 +162,8 @@ function reassign(
             totalRebateUsd: 0n,
             affiliateRewardUsd: 0n,
             traderDiscountUsd: 0n,
+            // Zero means "has never traded", which is the truth at transfer time. The first fill
+            // stamps it — see handleReferralFromPositionFeesEvent.
             firstTradeTimestamp: 0,
             lastTradeTimestamp: 0,
           }),
