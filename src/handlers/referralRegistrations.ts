@@ -143,8 +143,30 @@ function reassign(
     if (row.isFunded) {
       const from = affiliateStats.get(previousOwner)
       if (from && from.referredTradersCount > 0) from.referredTradersCount -= 1
+      // The new owner may have no scoreboard row yet — a code can be transferred to someone who has
+      // never had a fill. Skipping the increment there would lose it permanently: the trader row is
+      // already isFunded, so no later fill re-counts them.
       const to = affiliateStats.get(newOwner)
-      if (to) to.referredTradersCount += 1
+      if (to) {
+        to.referredTradersCount += 1
+      } else {
+        affiliateStats.set(
+          newOwner,
+          new AffiliateStat({
+            id: newOwner,
+            affiliate: newOwner,
+            volumeUsd: 0n,
+            tradesCount: 0,
+            referredTradersCount: 1,
+            feesGeneratedUsd: 0n,
+            totalRebateUsd: 0n,
+            affiliateRewardUsd: 0n,
+            traderDiscountUsd: 0n,
+            firstTradeTimestamp: 0,
+            lastTradeTimestamp: 0,
+          }),
+        )
+      }
     }
   }
 }

@@ -96,6 +96,38 @@ describe('handleReferralStorageLog — code transfer', () => {
     expect(affiliateStats.get(NEW_OWNER)!.referredTradersCount).toBe(1)
   })
 
+  it('creates a scoreboard row when the new owner has never had a fill', () => {
+    // A code can be transferred to someone with no AffiliateStat yet. Skipping the increment there
+    // loses it permanently, because the trader row is already isFunded and no later fill re-counts.
+    affiliateStats.delete(NEW_OWNER)
+    transfer()
+    expect(affiliateStats.get(NEW_OWNER)!.referredTradersCount).toBe(1)
+    expect(affiliateStats.get(NEW_OWNER)!.volumeUsd).toBe(0n)
+  })
+
+  it('a round trip inside one batch leaves the trader on the original owner', () => {
+    // A -> B then B -> A in the same batch vacates OLD_OWNER's key and then re-creates it. Deleting
+    // on "was vacated at some point" would drop the row that was just rewritten.
+    transfer()
+    handleReferralStorageLog(
+      ctx,
+      SET_CODE_OWNER_TOPIC,
+      abiCoder.encode(['address', 'address', 'bytes32'], [NEW_OWNER, OLD_OWNER, CODE]),
+      codes,
+      referredTraders,
+      affiliateStats,
+      removedTraderIds,
+    )
+
+    expect(referredTraders.has(`${OLD_OWNER}-${TRADER}`)).toBe(true)
+    expect(referredTraders.get(`${OLD_OWNER}-${TRADER}`)!.affiliate).toBe(OLD_OWNER)
+    // main.ts must not delete a key that is live again, so the surviving id is excluded there.
+    const orphaned = [...removedTraderIds].filter((id) => !referredTraders.has(id))
+    expect(orphaned).toEqual([`${NEW_OWNER}-${TRADER}`])
+    expect(affiliateStats.get(OLD_OWNER)!.referredTradersCount).toBe(1)
+    expect(affiliateStats.get(NEW_OWNER)!.referredTradersCount).toBe(0)
+  })
+
   it('does not move the count for a trader that never traded', () => {
     referredTraders.get(`${OLD_OWNER}-${TRADER}`)!.isFunded = false
     affiliateStats.set(OLD_OWNER, affiliate(OLD_OWNER, 0))

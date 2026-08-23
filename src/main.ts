@@ -104,8 +104,8 @@ processor.run(db, async (ctx) => {
 
   // Pre-load referral state. This is REQUIRED, not an optimisation: store.upsert replaces whole
   // rows, so any bucket not loaded here would be overwritten by this batch instead of incremented.
-  // Affiliate and trader rows are all-time and few, so they load wholesale; daily buckets only need
-  // the ones a batch can still be writing to (today, plus yesterday to survive a rollover).
+  // Affiliate and trader rows are all-time and few, so they load wholesale; daily buckets load only
+  // the days this batch actually touches (see the block-derived window below).
   const existingAffiliateStats = await ctx.store.find(AffiliateStat, {})
   for (const a of existingAffiliateStats) {
     affiliateStats.set(a.id, a)
@@ -309,10 +309,16 @@ processor.run(db, async (ctx) => {
   // key must be written before the old one is deleted. Interrupted between the two, this leaves a
   // duplicate — recoverable — rather than losing the trader entirely.
   if (removedTraderIds.size > 0) {
-    const stale = await ctx.store.find(ReferredTrader, { where: { id: In([...removedTraderIds]) } })
-    if (stale.length > 0) {
-      await ctx.store.remove(stale)
-      ctx.log.info(`Removed ${stale.length} referred traders re-keyed by a code transfer`)
+    // A code can change hands twice inside one batch (A -> B -> A), which vacates a key and then
+    // re-creates it. Deleting purely on "was vacated at some point" would drop the row that was
+    // just written, losing the trader outright, so anything still live is excluded.
+    const orphaned = [...removedTraderIds].filter((id) => !referredTraders.has(id))
+    if (orphaned.length > 0) {
+      const stale = await ctx.store.find(ReferredTrader, { where: { id: In(orphaned) } })
+      if (stale.length > 0) {
+        await ctx.store.remove(stale)
+        ctx.log.info(`Removed ${stale.length} referred traders re-keyed by a code transfer`)
+      }
     }
   }
 
