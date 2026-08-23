@@ -5,15 +5,16 @@ node_modules/
 lib/
 builds/
 
-# Generated files (re-included below for deployment)
-src/model/generated/
+# Generated files
+# NOTE: src/model/generated/ is intentionally COMMITTED — the Docker build runs
+# `npm run build` (tsc) only, never `codegen`, so the models must exist in the image.
 src/abi/*.ts
 
 # Environment
 .env
 
 # Database (re-include migrations for deployment)
-db/
+db/*
 !db/migrations/
 
 # IDE

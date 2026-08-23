@@ -472,3 +472,122 @@ type Distribution @entity {
   transaction: Transaction!
   timestamp: Int! @index
 }
+
+# =============================================================================
+# REFERRALS / AFFILIATE ATTRIBUTION
+# =============================================================================
+# Sourced from PositionFeesCollected, which carries `affiliate`, `trader` and
+# `referralCode` on every fill (zero/empty when the trade is unreferred), plus
+# the accrued rebate amounts when a rebate actually applied.
+#
+# Rebate figures are taken from the event, never recomputed as
+# volume x feeRate x currentRate — that would misprice every fill made before a
+# mid-window tier promotion.
+#
+# Referral CODE ownership is deliberately not modelled here: it lives on the
+# ReferralStorage contract, which emits plain Solidity events rather than going
+# through the EventEmitter, and is cheaply readable on chain.
+
+"All-time totals per affiliate. id = affiliate address (lowercased)."
+type AffiliateStat @entity {
+  id: ID!
+  affiliate: String! @index
+  volumeUsd: BigInt!
+  tradesCount: Int!
+  "Distinct referred traders that have opened at least one position — the funded-referral count."
+  referredTradersCount: Int!
+  feesGeneratedUsd: BigInt!
+  totalRebateUsd: BigInt!
+  affiliateRewardUsd: BigInt!
+  traderDiscountUsd: BigInt!
+  firstTradeTimestamp: Int!
+  lastTradeTimestamp: Int! @index
+}
+
+"""
+Daily bucket per affiliate. id = `${affiliate}-1d-${dayTs}`.
+A rolling 30-day figure is a query over these (periodStart_gte), not a stored column.
+"""
+type PeriodAffiliateStat @entity {
+  id: ID!
+  affiliate: String! @index
+  periodStart: Int! @index
+  volumeUsd: BigInt!
+  tradesCount: Int!
+  "Distinct traders who transacted in this period. Maintained via PeriodAffiliateTrader."
+  tradersActive: Int!
+  feesGeneratedUsd: BigInt!
+  affiliateRewardUsd: BigInt!
+}
+
+"""
+One row per (affiliate, day, trader). Exists purely so `tradersActive` can be counted without
+double counting a trader who fills several times in a day — a running counter alone cannot know
+whether a trader has already been seen in that period, and the batch that sees them may not be the
+batch that created the bucket.
+"""
+type PeriodAffiliateTrader @entity {
+  id: ID!
+  affiliate: String! @index
+  trader: String! @index
+  periodStart: Int! @index
+}
+
+"""
+The attribution link: one row per (affiliate, trader) pair, created on that
+trader's first fee-bearing trade under the affiliate's code.
+id = `${affiliate}-${trader}`.
+"""
+type ReferredTrader @entity {
+  id: ID!
+  affiliate: String! @index
+  trader: String! @index
+  referralCode: String! @index
+  """
+  True once the trader has taken a fee-bearing fill. A row can exist without this: attaching a
+  code is recorded from ReferralStorage, trading is recorded from PositionFeesCollected, and the
+  two are separate events. Only funded traders count toward a tier.
+  """
+  isFunded: Boolean! @index
+  "When the code was attached. Null for rows first seen through a fill rather than a registration."
+  registeredAt: Int
+  "Null until the trader has actually traded."
+  firstTradeTimestamp: Int @index
+  lastTradeTimestamp: Int @index
+  volumeUsd: BigInt!
+  tradesCount: Int!
+  feesPaidUsd: BigInt!
+  rebateGeneratedUsd: BigInt!
+}
+
+"""
+Code ownership, read from ReferralStorage rather than inferred. Needed to attribute a trader who
+has attached a code but not yet traded — at that point no fee event exists to carry the affiliate.
+"""
+type ReferralCode @entity {
+  id: ID!
+  "bytes32, right-padded."
+  code: String! @index
+  owner: String! @index
+  registeredAt: Int!
+  blockNumber: Int!
+}
+
+"""
+Affiliate reward ledger from AffiliateRewardUpdated (credit) and
+AffiliateRewardClaimed (withdrawal). Both emit scalar items, which the generic
+Distribution handler cannot capture — it reads array items, so the amounts were
+being silently dropped.
+"""
+type AffiliateReward @entity {
+  id: ID!
+  affiliate: String! @index
+  market: String! @index
+  token: String! @index
+  "Amount credited (Updated) or claimed (Claimed), in collateral token terms."
+  delta: BigInt!
+  nextValue: BigInt!
+  isClaim: Boolean! @index
+  transaction: Transaction!
+  timestamp: Int! @index
+}

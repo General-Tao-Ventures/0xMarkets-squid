@@ -1,15 +1,18 @@
 import 'dotenv/config'
+import { Between, In, MoreThanOrEqual } from 'typeorm'
 import { Store } from '@subsquid/typeorm-store'
-import { processor, db, EVENT_EMITTER_ADDRESS, EVENT_LOG1_TOPIC, EVENT_LOG2_TOPIC } from './processor'
+import { processor, db, EVENT_EMITTER_ADDRESS, EVENT_LOG1_TOPIC, EVENT_LOG2_TOPIC, REFERRAL_STORAGE_ADDRESS } from './processor'
 import { decodeEventLog, DecodedEventData } from './decoding/eventDecoder'
 import { handleOrderEvent, handlePositionEvent, handlePositionFeesEvent, PositionFeeData, EventContext } from './handlers/orders'
 import { handlePositionAndAccountStats, handleDepositAccountStats, COMPETITION_PERIODS } from './handlers/accountStats'
 import * as eventKeys from './decoding/eventKeys'
 import { handlePriceFromPositionEvent, handlePriceFromOracleEvent, handlePlatformStatFromDeposit } from './handlers/analytics'
 import { handleDistributionEvent } from './handlers/distributions'
+import { handleReferralFromPositionFeesEvent, handleAffiliateRewardEvent } from './handlers/referrals'
+import { handleReferralStorageLog } from './handlers/referralRegistrations'
 import { handleMarketEvent, handleMarketCreated, handleConfigEvent } from './handlers/markets'
 import { handleVolumeFromPositionEvent, handleFeesFromPositionFeesEvent, handleAprSnapshotFromFees, finalizeAprSnapshots } from './handlers/aggregates'
-import { TradeAction, Transaction, Price, PlatformStat, Distribution, MarketInfo, Position, AccountStat, PeriodAccountStat, VolumeInfo, FeesInfo, AprSnapshot } from './model'
+import { TradeAction, Transaction, Price, PlatformStat, Distribution, MarketInfo, Position, AccountStat, PeriodAccountStat, VolumeInfo, FeesInfo, AprSnapshot, AffiliateStat, PeriodAffiliateStat, ReferredTrader, AffiliateReward, ReferralCode, PeriodAffiliateTrader } from './model'
 import { generateLogId } from './utils/ids'
 
 processor.run(db, async (ctx) => {
@@ -30,6 +33,17 @@ processor.run(db, async (ctx) => {
   const volumeInfos: Map<string, VolumeInfo> = new Map()
   const feesInfos: Map<string, FeesInfo> = new Map()
   const aprSnapshots: Map<string, AprSnapshot> = new Map()
+
+  // Referral attribution maps
+  const affiliateStats: Map<string, AffiliateStat> = new Map()
+  const periodAffiliateStats: Map<string, PeriodAffiliateStat> = new Map()
+  const referredTraders: Map<string, ReferredTrader> = new Map()
+  // Rows whose id changed because a code was transferred. Re-keying alone leaves the old
+  // primary key in the database, so these are deleted explicitly after the upserts.
+  const removedTraderIds: Set<string> = new Set()
+  const affiliateRewards: AffiliateReward[] = []
+  const referralCodes: Map<string, ReferralCode> = new Map()
+  const periodAffiliateTraders: Map<string, PeriodAffiliateTrader> = new Map()
 
   // Tracking maps for cross-event enrichment
   const positionEventsByOrderKey: Map<string, TradeAction> = new Map()
@@ -88,9 +102,67 @@ processor.run(db, async (ctx) => {
     feesInfos.set(existingTotalFees.id, existingTotalFees)
   }
 
+  // Pre-load referral state. This is REQUIRED, not an optimisation: store.upsert replaces whole
+  // rows, so any bucket not loaded here would be overwritten by this batch instead of incremented.
+  // Affiliate and trader rows are all-time and few, so they load wholesale; daily buckets load only
+  // the days this batch actually touches (see the block-derived window below).
+  const existingAffiliateStats = await ctx.store.find(AffiliateStat, {})
+  for (const a of existingAffiliateStats) {
+    affiliateStats.set(a.id, a)
+  }
+  const existingReferredTraders = await ctx.store.find(ReferredTrader, {})
+  for (const t of existingReferredTraders) {
+    referredTraders.set(t.id, t)
+  }
+  const existingCodes = await ctx.store.find(ReferralCode, {})
+  for (const c of existingCodes) {
+    referralCodes.set(c.id, c)
+  }
+
+  // Daily buckets are keyed by BLOCK time, so the preload window must come from the batch, not the
+  // wall clock. Using Date.now() only ever matched when indexing the chain tip: during an initial
+  // sync, a catch-up after downtime, or a BLOCK_FROM re-sync, the day being written was never
+  // preloaded, and store.upsert then replaced the row with this batch's increments alone — silently
+  // losing the rest of that day. 30-day volume feeds tier promotion, so it undercounted.
+  const blockDays = ctx.blocks.map((b) => Math.floor(Math.floor(b.header.timestamp / 1000) / 86400) * 86400)
+  if (blockDays.length > 0) {
+    const firstDay = Math.min(...blockDays)
+    const lastDay = Math.max(...blockDays)
+    const existingPeriodAffiliateStats = await ctx.store.find(PeriodAffiliateStat, {
+      where: { periodStart: Between(firstDay, lastDay) },
+    })
+    for (const p of existingPeriodAffiliateStats) {
+      periodAffiliateStats.set(p.id, p)
+    }
+    const existingParticipation = await ctx.store.find(PeriodAffiliateTrader, {
+      where: { periodStart: Between(firstDay, lastDay) },
+    })
+    for (const p of existingParticipation) {
+      periodAffiliateTraders.set(p.id, p)
+    }
+  }
+
   for (const block of ctx.blocks) {
     for (let i = 0; i < block.logs.length; i++) {
       const log = block.logs[i]
+
+      // ReferralStorage: plain Solidity events, decoded separately from the EventEmitter format.
+      if (log.address.toLowerCase() === REFERRAL_STORAGE_ADDRESS) {
+        try {
+          handleReferralStorageLog(
+            { store: ctx.store, block: { height: block.header.height, timestamp: block.header.timestamp }, log: { id: generateLogId(block.header.height, log.logIndex), transactionHash: log.transactionHash } } as any,
+            log.topics[0].toLowerCase(),
+            log.data,
+            referralCodes,
+            referredTraders,
+            affiliateStats,
+            removedTraderIds,
+          )
+        } catch (err) {
+          ctx.log.warn(`Failed to handle ReferralStorage log at ${block.header.height}: ${err}`)
+        }
+        continue
+      }
 
       // Only process EventEmitter logs
       if (log.address.toLowerCase() !== EVENT_EMITTER_ADDRESS) {
@@ -131,6 +203,11 @@ processor.run(db, async (ctx) => {
           volumeInfos,
           feesInfos,
           aprSnapshots,
+          affiliateStats,
+          periodAffiliateStats,
+          referredTraders,
+          periodAffiliateTraders,
+          affiliateRewards,
           seenDepositors,
           positionEventsByOrderKey,
           orderCreatedByOrderKey,
@@ -210,6 +287,54 @@ processor.run(db, async (ctx) => {
     await ctx.store.upsert([...aprSnapshots.values()])
     ctx.log.info(`Upserted ${aprSnapshots.size} APR snapshots`)
   }
+
+  // Referral entities. AffiliateReward has a Transaction relation, so it must land after the
+  // transactions upsert above.
+  if (affiliateStats.size > 0) {
+    await ctx.store.upsert([...affiliateStats.values()])
+    ctx.log.info(`Upserted ${affiliateStats.size} affiliate stats`)
+  }
+
+  if (referralCodes.size > 0) {
+    await ctx.store.upsert([...referralCodes.values()])
+    ctx.log.info(`Upserted ${referralCodes.size} referral codes`)
+  }
+
+  if (referredTraders.size > 0) {
+    await ctx.store.upsert([...referredTraders.values()])
+    ctx.log.info(`Upserted ${referredTraders.size} referred traders`)
+  }
+
+  // Strictly after the referred-trader upsert: a code transfer re-keys the row, so the new primary
+  // key must be written before the old one is deleted. Interrupted between the two, this leaves a
+  // duplicate — recoverable — rather than losing the trader entirely.
+  if (removedTraderIds.size > 0) {
+    // A code can change hands twice inside one batch (A -> B -> A), which vacates a key and then
+    // re-creates it. Deleting purely on "was vacated at some point" would drop the row that was
+    // just written, losing the trader outright, so anything still live is excluded.
+    const orphaned = [...removedTraderIds].filter((id) => !referredTraders.has(id))
+    if (orphaned.length > 0) {
+      const stale = await ctx.store.find(ReferredTrader, { where: { id: In(orphaned) } })
+      if (stale.length > 0) {
+        await ctx.store.remove(stale)
+        ctx.log.info(`Removed ${stale.length} referred traders re-keyed by a code transfer`)
+      }
+    }
+  }
+
+  if (periodAffiliateTraders.size > 0) {
+    await ctx.store.upsert([...periodAffiliateTraders.values()])
+  }
+
+  if (periodAffiliateStats.size > 0) {
+    await ctx.store.upsert([...periodAffiliateStats.values()])
+    ctx.log.info(`Upserted ${periodAffiliateStats.size} affiliate period stats`)
+  }
+
+  if (affiliateRewards.length > 0) {
+    await ctx.store.insert(affiliateRewards)
+    ctx.log.info(`Inserted ${affiliateRewards.length} affiliate rewards`)
+  }
 })
 
 interface EntityCollectors {
@@ -225,6 +350,11 @@ interface EntityCollectors {
   volumeInfos: Map<string, VolumeInfo>
   feesInfos: Map<string, FeesInfo>
   aprSnapshots: Map<string, AprSnapshot>
+  affiliateStats: Map<string, AffiliateStat>
+  periodAffiliateStats: Map<string, PeriodAffiliateStat>
+  referredTraders: Map<string, ReferredTrader>
+  periodAffiliateTraders: Map<string, PeriodAffiliateTrader>
+  affiliateRewards: AffiliateReward[]
   seenDepositors: Set<string>
   // Tracking maps for cross-event enrichment
   positionEventsByOrderKey: Map<string, TradeAction>
@@ -292,6 +422,19 @@ async function processEvent(
     // Aggregate fees and APR snapshots from fee events
     handleFeesFromPositionFeesEvent(ctx, data, collectors.feesInfos)
     handleAprSnapshotFromFees(ctx, data, collectors.aprSnapshots, collectors.marketInfos)
+
+    // Referral attribution. Must sit inside this block: the branch returns, so a handler placed
+    // after it would never see PositionFeesCollected. The handler applies its own exact event-name
+    // guard, because handlePositionFeesEvent above also accepts PositionFeesInfo — an identical
+    // payload that would otherwise double every affiliate's volume.
+    handleReferralFromPositionFeesEvent(
+      ctx,
+      data,
+      collectors.affiliateStats,
+      collectors.periodAffiliateStats,
+      collectors.referredTraders,
+      collectors.periodAffiliateTraders,
+    )
     return
   }
 
@@ -316,6 +459,16 @@ async function processEvent(
 
     // Track totalDepositedUsd0 per account
     handleDepositAccountStats(ctx, data, collectors.accountStats, collectors.periodAccountStats)
+    return
+  }
+
+  // Affiliate reward ledger. Must precede the distribution branch below: AffiliateRewardUpdated
+  // currently falls through to it and is stored as an empty-array Distribution row, silently
+  // dropping the amount.
+  const affiliateRewardResult = handleAffiliateRewardEvent(ctx, data)
+  if (affiliateRewardResult) {
+    collectors.transactions.set(affiliateRewardResult.transaction.id, affiliateRewardResult.transaction)
+    collectors.affiliateRewards.push(affiliateRewardResult.reward)
     return
   }
 
