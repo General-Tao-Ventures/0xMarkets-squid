@@ -6,7 +6,7 @@ import {
   SET_CODE_OWNER_TOPIC,
   SET_TRADER_REFERRAL_CODE_TOPIC,
 } from '../processor'
-import { ReferralCode, ReferredTrader } from '../model'
+import { AffiliateStat, ReferralCode, ReferredTrader } from '../model'
 import { EventContext } from './orders'
 
 const abiCoder = ethers.AbiCoder.defaultAbiCoder()
@@ -28,6 +28,8 @@ export function handleReferralStorageLog(
   data: string,
   codes: Map<string, ReferralCode>,
   referredTraders: Map<string, ReferredTrader>,
+  affiliateStats: Map<string, AffiliateStat>,
+  removedTraderIds: Set<string>,
 ): void {
   const timestampSeconds = Math.floor(ctx.block.timestamp / 1000)
 
@@ -40,13 +42,13 @@ export function handleReferralStorageLog(
   // Ownership can move after registration; the trader's affiliate must follow it.
   if (topic0 === SET_CODE_OWNER_TOPIC) {
     const [, newAccount, code] = abiCoder.decode(['address', 'address', 'bytes32'], data)
-    reassign(codes, referredTraders, code as string, (newAccount as string).toLowerCase(), timestampSeconds, ctx.block.height)
+    reassign(codes, referredTraders, affiliateStats, removedTraderIds, code as string, (newAccount as string).toLowerCase(), timestampSeconds, ctx.block.height)
     return
   }
 
   if (topic0 === GOV_SET_CODE_OWNER_TOPIC) {
     const [code, newAccount] = abiCoder.decode(['bytes32', 'address'], data)
-    reassign(codes, referredTraders, code as string, (newAccount as string).toLowerCase(), timestampSeconds, ctx.block.height)
+    reassign(codes, referredTraders, affiliateStats, removedTraderIds, code as string, (newAccount as string).toLowerCase(), timestampSeconds, ctx.block.height)
     return
   }
 
@@ -113,6 +115,8 @@ function upsertCode(
 function reassign(
   codes: Map<string, ReferralCode>,
   referredTraders: Map<string, ReferredTrader>,
+  affiliateStats: Map<string, AffiliateStat>,
+  removedTraderIds: Set<string>,
   code: string,
   newOwner: string,
   timestampSeconds: number,
@@ -122,10 +126,25 @@ function reassign(
 
   for (const [id, row] of [...referredTraders.entries()]) {
     if (row.referralCode !== code || row.affiliate === newOwner) continue
+
+    const previousOwner = row.affiliate
     referredTraders.delete(id)
+    // Dropping it from the map is not enough: the row still exists in the database under its old
+    // primary key, and the next batch preloads it straight back as a ghost that credits the former
+    // owner forever. Record it so main.ts can remove it for real.
+    removedTraderIds.add(id)
+
     const nextId = `${newOwner}-${row.trader}`
     row.id = nextId
     row.affiliate = newOwner
     referredTraders.set(nextId, row)
+
+    // Funded-referral counts are a tier input, so they have to move with the trader.
+    if (row.isFunded) {
+      const from = affiliateStats.get(previousOwner)
+      if (from && from.referredTradersCount > 0) from.referredTradersCount -= 1
+      const to = affiliateStats.get(newOwner)
+      if (to) to.referredTradersCount += 1
+    }
   }
 }

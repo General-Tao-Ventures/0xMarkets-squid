@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { MoreThanOrEqual } from 'typeorm'
+import { Between, In, MoreThanOrEqual } from 'typeorm'
 import { Store } from '@subsquid/typeorm-store'
 import { processor, db, EVENT_EMITTER_ADDRESS, EVENT_LOG1_TOPIC, EVENT_LOG2_TOPIC, REFERRAL_STORAGE_ADDRESS } from './processor'
 import { decodeEventLog, DecodedEventData } from './decoding/eventDecoder'
@@ -38,6 +38,9 @@ processor.run(db, async (ctx) => {
   const affiliateStats: Map<string, AffiliateStat> = new Map()
   const periodAffiliateStats: Map<string, PeriodAffiliateStat> = new Map()
   const referredTraders: Map<string, ReferredTrader> = new Map()
+  // Rows whose id changed because a code was transferred. Re-keying alone leaves the old
+  // primary key in the database, so these are deleted explicitly after the upserts.
+  const removedTraderIds: Set<string> = new Set()
   const affiliateRewards: AffiliateReward[] = []
   const referralCodes: Map<string, ReferralCode> = new Map()
   const periodAffiliateTraders: Map<string, PeriodAffiliateTrader> = new Map()
@@ -116,18 +119,27 @@ processor.run(db, async (ctx) => {
     referralCodes.set(c.id, c)
   }
 
-  const recentPeriodStart = Math.floor(Date.now() / 1000 / 86400) * 86400 - 86400
-  const existingPeriodAffiliateStats = await ctx.store.find(PeriodAffiliateStat, {
-    where: { periodStart: MoreThanOrEqual(recentPeriodStart) },
-  })
-  for (const p of existingPeriodAffiliateStats) {
-    periodAffiliateStats.set(p.id, p)
-  }
-  const existingParticipation = await ctx.store.find(PeriodAffiliateTrader, {
-    where: { periodStart: MoreThanOrEqual(recentPeriodStart) },
-  })
-  for (const p of existingParticipation) {
-    periodAffiliateTraders.set(p.id, p)
+  // Daily buckets are keyed by BLOCK time, so the preload window must come from the batch, not the
+  // wall clock. Using Date.now() only ever matched when indexing the chain tip: during an initial
+  // sync, a catch-up after downtime, or a BLOCK_FROM re-sync, the day being written was never
+  // preloaded, and store.upsert then replaced the row with this batch's increments alone — silently
+  // losing the rest of that day. 30-day volume feeds tier promotion, so it undercounted.
+  const blockDays = ctx.blocks.map((b) => Math.floor(Math.floor(b.header.timestamp / 1000) / 86400) * 86400)
+  if (blockDays.length > 0) {
+    const firstDay = Math.min(...blockDays)
+    const lastDay = Math.max(...blockDays)
+    const existingPeriodAffiliateStats = await ctx.store.find(PeriodAffiliateStat, {
+      where: { periodStart: Between(firstDay, lastDay) },
+    })
+    for (const p of existingPeriodAffiliateStats) {
+      periodAffiliateStats.set(p.id, p)
+    }
+    const existingParticipation = await ctx.store.find(PeriodAffiliateTrader, {
+      where: { periodStart: Between(firstDay, lastDay) },
+    })
+    for (const p of existingParticipation) {
+      periodAffiliateTraders.set(p.id, p)
+    }
   }
 
   for (const block of ctx.blocks) {
@@ -143,6 +155,8 @@ processor.run(db, async (ctx) => {
             log.data,
             referralCodes,
             referredTraders,
+            affiliateStats,
+            removedTraderIds,
           )
         } catch (err) {
           ctx.log.warn(`Failed to handle ReferralStorage log at ${block.header.height}: ${err}`)
@@ -289,6 +303,17 @@ processor.run(db, async (ctx) => {
   if (referredTraders.size > 0) {
     await ctx.store.upsert([...referredTraders.values()])
     ctx.log.info(`Upserted ${referredTraders.size} referred traders`)
+  }
+
+  // Strictly after the referred-trader upsert: a code transfer re-keys the row, so the new primary
+  // key must be written before the old one is deleted. Interrupted between the two, this leaves a
+  // duplicate — recoverable — rather than losing the trader entirely.
+  if (removedTraderIds.size > 0) {
+    const stale = await ctx.store.find(ReferredTrader, { where: { id: In([...removedTraderIds]) } })
+    if (stale.length > 0) {
+      await ctx.store.remove(stale)
+      ctx.log.info(`Removed ${stale.length} referred traders re-keyed by a code transfer`)
+    }
   }
 
   if (periodAffiliateTraders.size > 0) {
