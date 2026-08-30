@@ -110,9 +110,7 @@ curl -sS -X POST "$SQUID_URL" -H 'content-type: application/json' \
    (`{marketLower}-1h-{hourTs}`). Volume is written only from `PositionIncrease` / `PositionDecrease`
    (`src/handlers/aggregates.ts`). The `positionsVolumes` entity is unused — do not expect rows there.
 
-A scheduled / manually dispatched GitHub Action (`.github/workflows/squid-health.yml`) curls the
-same endpoint and fails when lag exceeds 200 blocks or GraphQL is unreachable. It does **not** run
-on pull requests, so PR CI stays independent of live GCP lag.
+Automated GitHub Action lag checks are disabled. Use the checklist above if GraphQL is down or volume looks stale.
 
 ## Development
 
